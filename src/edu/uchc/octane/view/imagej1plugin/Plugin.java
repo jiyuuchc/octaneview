@@ -3,6 +3,7 @@ package edu.uchc.octane.view.imagej1plugin;
 import ij.IJ;
 import ij.ImageJ;
 import ij.ImagePlus;
+import ij.gui.DialogListener;
 import ij.gui.GenericDialog;
 import ij.gui.NonBlockingGenericDialog;
 import ij.gui.Roi;
@@ -17,12 +18,15 @@ import java.io.ObjectOutputStream;
 import java.util.HashMap;
 import java.util.prefs.Preferences;
 
+import org.apache.commons.math3.util.FastMath;
+
 import edu.uchc.octane.core.datasource.OctaneDataFile;
 import edu.uchc.octane.core.localizationimage.RasterizedLocalizationImage;
 
 public class Plugin implements ij.plugin.PlugIn {
 
     private static final String PIXEL_SIZE = "pixel_size";
+    private static final String LOCAL_DENSITY_RADIUS = "local_density_radius";
     
     Preferences prefs = Preferences.userNodeForPackage(getClass());
     
@@ -147,7 +151,8 @@ public class Plugin implements ij.plugin.PlugIn {
             }
         };
         progressThread.start();
-        data.constructKDtree();
+        data.measureLocalDensity(prefs.getDouble(LOCAL_DENSITY_RADIUS, 250.0));
+        //data.measureLocalDensity(50);
         progressThread.interrupt();
     }
 
@@ -156,29 +161,40 @@ public class Plugin implements ij.plugin.PlugIn {
         frameCol = data.frameCol;
         intensityCol = data.intensityCol;
         sigmaCol = data.sigmaCol;
-        HashMap<Integer, double[]> filters = data.getViewFilters();
+
+        int densityCol = data.getColFromHeader("density");
+        
+        HashMap<Integer, double[]> oldFilters = new HashMap<Integer, double[]>();
 
         GenericDialog dlg = new NonBlockingGenericDialog("Change View Setting: " + imp.getTitle());
         if (frameCol != -1) {
             double minFrame = data.getSummaryStatistics(frameCol).getMin();
             double maxFrame = data.getSummaryStatistics(frameCol).getMax();
-            double[] f = (double[]) filters.get(Integer.valueOf(frameCol));
+            double[] f = data.getViewFilter(frameCol);
             dlg.addSlider("Frame: min", minFrame, maxFrame, f != null ? f[0] : minFrame);
             dlg.addSlider("Frame: max", minFrame, maxFrame, f != null ? f[1] : maxFrame);
+            oldFilters.put(frameCol, f);
         }
         if (intensityCol != -1) {
-            // double maxInt = data.getSummaryStatitics(intensityCol).getMax();
-            double[] f = (double[]) filters.get(Integer.valueOf(intensityCol));
-            dlg.addSlider("Intensity^.5: min", 0.0D, 1000, f != null ? f[0] : 0.0D);
-            dlg.addSlider("Intensity^.5: max", 0.0D, 1000, f != null ? f[1] : 1000);
+            double[] f = data.getViewFilter(intensityCol);
+            dlg.addSlider("Intensity^.5: min", 0.0D, 1000.0, f != null ? FastMath.sqrt(f[0]) : 0.0);
+            dlg.addSlider("Intensity^.5: max", 0.0D, 1000.0, f != null ? FastMath.sqrt(f[1]) : 1000.0);
+            oldFilters.put(intensityCol, f);
         }
         if (sigmaCol != -1) {
-            double[] f = (double[]) filters.get(Integer.valueOf(sigmaCol));
+            double[] f = data.getViewFilter(sigmaCol);
             dlg.addSlider("Sigma: min", 0.0D, 500.0D, f != null ? f[0] : 0.0D);
             dlg.addSlider("Sigma: max", 0.0D, 500.0D, f != null ? f[1] : 500.0D);
+            oldFilters.put(sigmaCol, f);
+        }
+        if (densityCol != -1) {
+            double maxDensity = data.getSummaryStatistics(densityCol).getMax();
+            double[] f = data.getViewFilter(densityCol);
+            dlg.addSlider("Density: min", 0, maxDensity, f != null ? f[0] : 0);
+            oldFilters.put(densityCol, f);
         }
 
-        dlg.addDialogListener(new ij.gui.DialogListener() {
+        dlg.addDialogListener(new DialogListener() {
 
             @Override
             public boolean dialogItemChanged(GenericDialog dlg, AWTEvent e) {
@@ -206,6 +222,11 @@ public class Plugin implements ij.plugin.PlugIn {
                         data.addViewFilter(sigmaCol, new double[] { minsigma, maxSigma });
                     }
                 }
+                
+                if (densityCol != -1) {
+    				double th = dlg.getNextNumber();
+    				data.addViewFilter(densityCol, new double [] {th, Double.MAX_VALUE});                	
+                }
 
                 data.startRendering();
                 return true;
@@ -213,12 +234,19 @@ public class Plugin implements ij.plugin.PlugIn {
         });
         data.onRenderingDone(new RenderingCallback(imp));
         dlg.showDialog();
+        if (dlg.wasCanceled()) {
+            // restore old filter values
+            for (Integer key:oldFilters.keySet()) {
+                data.addViewFilter(key, oldFilters.get(key));
+            }
+            data.getRendered();
+        }
         data.onRenderingDone(null);
     }
 
     void saveFiltered(final RasterizedLocalizationImage data, ImagePlus imp) throws IOException {
         double[][] newData = data.getFilteredData();
-        OctaneDataFile odf = new OctaneDataFile(newData, data.getHeaders());
+        OctaneDataFile odf = new OctaneDataFile(newData, data.getDataSource().headers);
 
         SaveDialog dlg = new SaveDialog("Save", imp.getTitle(), null);
         if (dlg.getFileName() != null) {
@@ -252,6 +280,7 @@ public class Plugin implements ij.plugin.PlugIn {
     void setPreferences() {
         GenericDialog dlg = new GenericDialog("OctaneView: Prefs");
         dlg.addNumericField("Pixel size", prefs.getDouble(PIXEL_SIZE, 16.0), 1);
+        dlg.addNumericField("Local-density radius", prefs.getDouble(LOCAL_DENSITY_RADIUS, 250.0), 1);
         
         dlg.showDialog();
         
@@ -260,6 +289,10 @@ public class Plugin implements ij.plugin.PlugIn {
             if (p > 0) {
                 prefs.putDouble(PIXEL_SIZE, p);
             }
+            double ldr = dlg.getNextNumber();
+            if (ldr > 0) {
+            	prefs.putDouble(LOCAL_DENSITY_RADIUS, ldr);
+            }
         }
     }
 
@@ -267,7 +300,8 @@ public class Plugin implements ij.plugin.PlugIn {
         ImageJ ij = new ImageJ();
         Plugin plugin = new Plugin();
         plugin.run("Load");
-        plugin.run("Append");        
+        plugin.run("KDTree");
+        plugin.run("ViewSettings");
         //IJ.getImage().setRoi(new java.awt.Rectangle(1560, 1560, 2000, 2000));
         //plugin.run("ZoomIn");
         //plugin.run("ViewSettings");
