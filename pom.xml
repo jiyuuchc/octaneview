@@ -27,7 +27,12 @@
   	<dependency>
   		<groupId>edu.uchc.octane</groupId>
   		<artifactId>octane-core</artifactId>
-  		<version>0.0.1-SNAPSHOT</version>
+  		<version>1.0-SNAPSHOT</version>
+  	</dependency>
+  	<dependency>
+  		<groupId>org.slf4j</groupId>
+  		<artifactId>slf4j-jdk14</artifactId>
+  		<version>1.7.6</version>
   	</dependency>
   </dependencies>
 </project>
