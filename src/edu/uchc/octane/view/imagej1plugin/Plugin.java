@@ -27,6 +27,7 @@ public class Plugin implements ij.plugin.PlugIn {
 
     private static final String PIXEL_SIZE = "pixel_size";
     private static final String LOCAL_DENSITY_RADIUS = "local_density_radius";
+    private static final String Z_SLICE_DEPTH = "z_slice_depth";
     
     Preferences prefs = Preferences.userNodeForPackage(getClass());
     
@@ -129,6 +130,16 @@ public class Plugin implements ij.plugin.PlugIn {
         if (cmd.equals("Append")) {
             appendNewData(d, imp);
         }
+        
+        if (cmd.equals("zSlice")) {
+        	selectSlice(d, imp);
+        }
+        
+        if (cmd.equals("zSliceAll")) {
+        	d.setViewFilter(d.zCol, null);
+        	d.getRendered();
+        	imp.updateAndDraw();
+        }
     }
 
     void buildKDTree(RasterizedLocalizationImage data, ImagePlus imp) {
@@ -203,7 +214,7 @@ public class Plugin implements ij.plugin.PlugIn {
                     double minFrame = dlg.getNextNumber();
                     double maxFrame = dlg.getNextNumber();
                     if (minFrame < maxFrame) {
-                        data.addViewFilter(frameCol, new double[] { minFrame, maxFrame });
+                        data.setViewFilter(frameCol, new double[] { minFrame, maxFrame });
                     }
                 }
 
@@ -211,7 +222,7 @@ public class Plugin implements ij.plugin.PlugIn {
                     double minInt = dlg.getNextNumber();
                     double maxInt = dlg.getNextNumber();
                     if (minInt < maxInt) {
-                        data.addViewFilter(intensityCol, new double[] { minInt * minInt, maxInt * maxInt });
+                        data.setViewFilter(intensityCol, new double[] { minInt * minInt, maxInt * maxInt });
                     }
                 }
 
@@ -219,13 +230,13 @@ public class Plugin implements ij.plugin.PlugIn {
                     double minsigma = dlg.getNextNumber();
                     double maxSigma = dlg.getNextNumber();
                     if (minsigma < maxSigma) {
-                        data.addViewFilter(sigmaCol, new double[] { minsigma, maxSigma });
+                        data.setViewFilter(sigmaCol, new double[] { minsigma, maxSigma });
                     }
                 }
                 
                 if (densityCol != -1) {
     				double th = dlg.getNextNumber();
-    				data.addViewFilter(densityCol, new double [] {th, Double.MAX_VALUE});                	
+    				data.setViewFilter(densityCol, new double [] {th, Double.MAX_VALUE});                	
                 }
 
                 data.startRendering();
@@ -237,7 +248,7 @@ public class Plugin implements ij.plugin.PlugIn {
         if (dlg.wasCanceled()) {
             // restore old filter values
             for (Integer key:oldFilters.keySet()) {
-                data.addViewFilter(key, oldFilters.get(key));
+                data.setViewFilter(key, oldFilters.get(key));
             }
             data.getRendered();
         }
@@ -246,8 +257,12 @@ public class Plugin implements ij.plugin.PlugIn {
 
     void saveFiltered(final RasterizedLocalizationImage data, ImagePlus imp) throws IOException {
         double[][] newData = data.getFilteredData();
-        OctaneDataFile odf = new OctaneDataFile(newData, data.getDataSource().headers);
 
+        //ignore zSlice selection
+        double [] zFilter = data.getViewFilter(data.zCol);
+        data.setViewFilter(data.zCol, null);
+        
+        OctaneDataFile odf = new OctaneDataFile(newData, data.getDataSource().headers);
         SaveDialog dlg = new SaveDialog("Save", imp.getTitle(), null);
         if (dlg.getFileName() != null) {
             String outPath = dlg.getDirectory() + dlg.getFileName();
@@ -255,8 +270,10 @@ public class Plugin implements ij.plugin.PlugIn {
             fo.writeObject(odf);
             fo.close();
         }
+
+        data.setViewFilter(data.zCol, zFilter);
     }
-    
+
     void appendNewData(final RasterizedLocalizationImage data, ImagePlus imp) {
         OpenDialog dlg = new OpenDialog("Append");
         OctaneDataFile odf = null;
@@ -280,7 +297,8 @@ public class Plugin implements ij.plugin.PlugIn {
     void setPreferences() {
         GenericDialog dlg = new GenericDialog("OctaneView: Prefs");
         dlg.addNumericField("Pixel size", prefs.getDouble(PIXEL_SIZE, 16.0), 1);
-        dlg.addNumericField("Local-density radius", prefs.getDouble(LOCAL_DENSITY_RADIUS, 250.0), 1);
+        dlg.addNumericField("Local-density radius", prefs.getDouble(LOCAL_DENSITY_RADIUS, 250.0), 0);
+        dlg.addNumericField("Z slice depth", prefs.getDouble(Z_SLICE_DEPTH, 100), 0);
         
         dlg.showDialog();
         
@@ -293,9 +311,49 @@ public class Plugin implements ij.plugin.PlugIn {
             if (ldr > 0) {
             	prefs.putDouble(LOCAL_DENSITY_RADIUS, ldr);
             }
+            double zDepth = dlg.getNextNumber();
+            if (zDepth > 0) {
+            	prefs.putDouble(Z_SLICE_DEPTH, zDepth);
+            }
         }
     }
 
+    void selectSlice(final RasterizedLocalizationImage data, ImagePlus imp) {
+    
+    	if (data.is2DData()) {
+    		IJ.error("Not 3d Data");
+    		return;
+    	}
+
+    	GenericDialog dlg = new NonBlockingGenericDialog("Select Z Slice: " + imp.getTitle());
+        double minZ = data.getSummaryStatistics(data.zCol).getMin();
+        double maxZ = data.getSummaryStatistics(data.zCol).getMax();
+        double[] f = data.getViewFilter(data.zCol);
+        double zDepth = prefs.getDouble(Z_SLICE_DEPTH, 200);
+        int nSlices = (int)((maxZ - minZ) / zDepth) + 1; 
+        dlg.addSlider("Select Z Slice", 1, nSlices, 1);
+        
+        dlg.addDialogListener(new DialogListener() {
+
+			@Override
+			public boolean dialogItemChanged(GenericDialog dlg, AWTEvent e) {
+				double s = dlg.getNextNumber();
+				data.setViewFilter(data.zCol, new double[] {minZ + (s - 1) * zDepth, minZ + s * zDepth});
+				data.startRendering();
+				return true;
+			}
+        	
+        });
+        
+        data.onRenderingDone(new RenderingCallback(imp));
+        dlg.showDialog();
+        if (dlg.wasCanceled()) {
+        	data.setViewFilter(data.zCol, f);
+            data.getRendered();
+        }
+        data.onRenderingDone(null);
+    }
+    
     public static void main(String... args) throws Exception {
         ImageJ ij = new ImageJ();
         Plugin plugin = new Plugin();
