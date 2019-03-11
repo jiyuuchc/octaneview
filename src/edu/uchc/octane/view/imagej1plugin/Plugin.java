@@ -5,12 +5,15 @@ import ij.ImageJ;
 import ij.ImagePlus;
 import ij.gui.DialogListener;
 import ij.gui.GenericDialog;
+import ij.gui.HistogramWindow;
 import ij.gui.NonBlockingGenericDialog;
 import ij.gui.Roi;
 import ij.io.OpenDialog;
 import ij.io.SaveDialog;
+import ij.process.FloatProcessor;
 import ij.process.ShortProcessor;
 import java.awt.AWTEvent;
+import java.awt.Rectangle;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -96,11 +99,14 @@ public class Plugin implements ij.plugin.PlugIn {
         }
 
         if (cmd.equals("ZoomIn")) {
-            Roi roi = imp.getRoi();
+            Rectangle roi = imp.getRoi().getBounds();
             if (roi == null) {
                 return;
             }
-            d.setRoi(roi.getBounds());
+            Rectangle oldroi = d.getRoi();
+            roi.x += oldroi.x - 1;
+            roi.y += oldroi.y - 1;
+            d.setRoi(roi);
             ShortProcessor ip = new ShortProcessor(d.getRoi().width, d.getRoi().height, d.getRendered(), null);
             imp.setProcessor(ip);
         }
@@ -165,6 +171,27 @@ public class Plugin implements ij.plugin.PlugIn {
         data.measureLocalDensity(prefs.getDouble(LOCAL_DENSITY_RADIUS, 250.0));
         //data.measureLocalDensity(50);
         progressThread.interrupt();
+        
+        //show histogram
+        double [] densities = data.getData("density");
+        if (densities != null) {
+
+        	FloatProcessor ip = new FloatProcessor(1, densities.length, densities);
+        	ImagePlus tmpImp = new ImagePlus("", ip);
+        	HistogramWindow hw = new HistogramWindow("Local Density Histogram", tmpImp, 20);
+        	hw.setVisible(true);
+        	tmpImp.close();
+        	
+            double [] logDensities = new double[densities.length];
+            for (int i = 0; i < densities.length; i++) {
+            	logDensities[i] = FastMath.log(densities[i]);
+            }        	
+        	ip = new FloatProcessor(1, logDensities.length, logDensities);
+        	tmpImp = new ImagePlus("", ip);
+        	hw = new HistogramWindow("Local Density Histogram - Log Scale", tmpImp, 20);
+        	hw.setVisible(true);
+        	tmpImp.close();
+        }
     }
 
     void changeViewSettings(final RasterizedLocalizationImage data, ImagePlus imp) {
@@ -213,7 +240,7 @@ public class Plugin implements ij.plugin.PlugIn {
                 if (frameCol != -1) {
                     double minFrame = dlg.getNextNumber();
                     double maxFrame = dlg.getNextNumber();
-                    if (minFrame < maxFrame) {
+                    if (minFrame <= maxFrame) {
                         data.setViewFilter(frameCol, new double[] { minFrame, maxFrame });
                     }
                 }
@@ -358,10 +385,10 @@ public class Plugin implements ij.plugin.PlugIn {
         ImageJ ij = new ImageJ();
         Plugin plugin = new Plugin();
         plugin.run("Load");
+        IJ.getImage().setRoi(new java.awt.Rectangle(1560, 1560, 500, 500));
+        plugin.run("ZoomIn");
         plugin.run("KDTree");
-        plugin.run("ViewSettings");
-        //IJ.getImage().setRoi(new java.awt.Rectangle(1560, 1560, 2000, 2000));
-        //plugin.run("ZoomIn");
+        //plugin.run("ViewSettings");        
         //plugin.run("ViewSettings");
         // plugin.run("ZoomOut");
         //plugin.run("Save");
