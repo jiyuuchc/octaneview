@@ -13,10 +13,9 @@ import ij.process.FloatProcessor;
 import ij.process.ShortProcessor;
 import java.awt.AWTEvent;
 import java.awt.Rectangle;
-import java.io.FileOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.util.HashMap;
 import java.util.prefs.Preferences;
 
@@ -24,6 +23,9 @@ import org.apache.commons.math3.util.FastMath;
 
 import edu.uchc.octane.core.datasource.OctaneDataFile;
 import edu.uchc.octane.core.localizationimage.RasterizedLocalizationImage;
+import edu.uchc.octane.core.tracking.ConnectionOptimizer;
+import edu.uchc.octane.core.tracking.MinSumDistance;
+import edu.uchc.octane.core.tracking.TrackingDataFile;
 
 public class Plugin implements ij.plugin.PlugIn {
 
@@ -67,15 +69,19 @@ public class Plugin implements ij.plugin.PlugIn {
                 
                 try {
                     ObjectInputStream fi = new ObjectInputStream(new java.io.FileInputStream(dlg.getPath()));
-                    d = new RasterizedLocalizationImage((OctaneDataFile) fi.readObject(), prefs.getDouble(PIXEL_SIZE, 16.0));
+                    d = new RasterizedLocalizationImage((OctaneDataFile) fi.readObject(), prefs.getDouble(PIXEL_SIZE, 10.0));
                     fi.close();
-                } catch (IOException e) {
-                    IJ.log("IO error");
-                    IJ.log(e.getMessage());
-                    return;
                 } catch (ClassNotFoundException e) {
-                    IJ.log("Doesn't seem to be the right file type: class not found");
-                    IJ.log(e.getMessage());
+                	//try load as csv
+                	File f = new File(dlg.getPath());
+                	OctaneDataFile odf = OctaneDataFile.importFromCSV(f);
+                	if (odf == null) { // still not working
+                		IJ.error("Can not recognize file format.");
+                		return;
+                	}
+                	d = new RasterizedLocalizationImage(odf, prefs.getDouble(PIXEL_SIZE, 10.0));
+                } catch (IOException e) {
+                    IJ.error(e.getMessage());
                     return;
                 }
 
@@ -120,6 +126,10 @@ public class Plugin implements ij.plugin.PlugIn {
             changeViewSettings(d, imp);
         }
 
+        if (cmd.contentEquals("Merge")) {
+        	mergeRepeats(d, imp);
+        }
+
         if (cmd.equals("KDTree")) {
             buildKDTree(d, imp);
         }
@@ -128,8 +138,20 @@ public class Plugin implements ij.plugin.PlugIn {
             try {
                 saveFiltered(d, imp);
             } catch (IOException e) {
-                e.printStackTrace();
+                // e.printStackTrace();
+                IJ.error(e.getLocalizedMessage());
+                return;
             }
+        }
+        
+        if (cmd.equals("Export")) {
+        	try {
+        		saveFiltered(d, imp, true);
+        	} catch (IOException e) {
+        		// e.printStackTrace();
+        		IJ.error(e.getLocalizedMessage());
+        		return;
+        	}
         }
         
         if (cmd.equals("Append")) {
@@ -282,6 +304,10 @@ public class Plugin implements ij.plugin.PlugIn {
     }
 
     void saveFiltered(final RasterizedLocalizationImage data, ImagePlus imp) throws IOException {
+    	saveFiltered(data, imp, false);
+    }
+    
+    void saveFiltered(final RasterizedLocalizationImage data, ImagePlus imp, boolean asCSV) throws IOException {
         double[][] newData = data.getFilteredData();
 
         //ignore zSlice selection
@@ -289,12 +315,17 @@ public class Plugin implements ij.plugin.PlugIn {
         data.setViewFilter(data.zCol, null);
         
         OctaneDataFile odf = new OctaneDataFile(newData, data.getDataSource().headers);
-        SaveDialog dlg = new SaveDialog("Save", imp.getTitle(), null);
+        String ext = asCSV ? ".octane":".csv";
+        SaveDialog dlg = new SaveDialog("Save", imp.getTitle(), ext);
         if (dlg.getFileName() != null) {
             String outPath = dlg.getDirectory() + dlg.getFileName();
-            ObjectOutputStream fo = new ObjectOutputStream(new FileOutputStream(outPath));
-            fo.writeObject(odf);
-            fo.close();
+            
+            if (! asCSV ) {
+            	odf.writeToFile(outPath);
+            } else {
+            	File csvFile = new File(outPath);
+            	odf.exportToCSV(csvFile);
+            }
         }
 
         data.setViewFilter(data.zCol, zFilter);
@@ -320,6 +351,16 @@ public class Plugin implements ij.plugin.PlugIn {
         imp.setProcessor(ip);
     }
     
+    void mergeRepeats(final RasterizedLocalizationImage data, ImagePlus imp) {
+    	ConnectionOptimizer optimizer = new MinSumDistance(150 /*max distance*/);
+    	TrackingDataFile tracker = new TrackingDataFile(optimizer, 1 /*blinkings*/);
+    	OctaneDataFile trackedData = tracker.processLocalizations(data, true /*merge*/);
+    	RasterizedLocalizationImage newData = new RasterizedLocalizationImage(trackedData, prefs.getDouble(PIXEL_SIZE, 10.0));
+        ShortProcessor ip = new ShortProcessor(newData.getDimX(), newData.getDimY(), newData.getRendered(), null);
+        imp.setProcessor(ip);
+        imp.setProperty("LocalizationData", data);
+    }
+
     void setPreferences() {
         GenericDialog dlg = new GenericDialog("OctaneView: Prefs");
         dlg.addNumericField("Pixel size", prefs.getDouble(PIXEL_SIZE, 16.0), 1);
