@@ -22,7 +22,7 @@ import java.util.prefs.Preferences;
 
 import org.apache.commons.math3.util.FastMath;
 
-import edu.uchc.octane.core.localizationdata.LocalizationDataset;
+import edu.uchc.octane.core.datasource.OctaneDataFile;
 import edu.uchc.octane.core.localizationimage.RasterizedLocalizationImage;
 
 public class Plugin implements ij.plugin.PlugIn {
@@ -67,7 +67,7 @@ public class Plugin implements ij.plugin.PlugIn {
                 
                 try {
                     ObjectInputStream fi = new ObjectInputStream(new java.io.FileInputStream(dlg.getPath()));
-                    d = new RasterizedLocalizationImage((LocalizationDataset) fi.readObject(), prefs.getDouble(PIXEL_SIZE, 16.0));
+                    d = new RasterizedLocalizationImage((OctaneDataFile) fi.readObject(), prefs.getDouble(PIXEL_SIZE, 16.0));
                     fi.close();
                 } catch (IOException e) {
                     IJ.log("IO error");
@@ -288,7 +288,7 @@ public class Plugin implements ij.plugin.PlugIn {
         double [] zFilter = data.getViewFilter(data.zCol);
         data.setViewFilter(data.zCol, null);
         
-        LocalizationDataset odf = new LocalizationDataset(newData, data.getDataSource().headers);
+        OctaneDataFile odf = new OctaneDataFile(newData, data.getDataSource().headers);
         SaveDialog dlg = new SaveDialog("Save", imp.getTitle(), null);
         if (dlg.getFileName() != null) {
             String outPath = dlg.getDirectory() + dlg.getFileName();
@@ -302,12 +302,12 @@ public class Plugin implements ij.plugin.PlugIn {
 
     void appendNewData(final RasterizedLocalizationImage data, ImagePlus imp) {
         OpenDialog dlg = new OpenDialog("Append");
-        LocalizationDataset odf = null;
+        OctaneDataFile odf = null;
 
         if (dlg.getPath() != null) {
             try {
                 ObjectInputStream fi = new ObjectInputStream(new java.io.FileInputStream(dlg.getPath()));
-                odf = (LocalizationDataset) fi.readObject();
+                odf = (OctaneDataFile) fi.readObject();
                 fi.close();
             } catch (Exception e) {
                 e.printStackTrace();
