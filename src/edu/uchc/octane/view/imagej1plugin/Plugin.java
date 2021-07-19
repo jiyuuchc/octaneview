@@ -315,7 +315,7 @@ public class Plugin implements ij.plugin.PlugIn {
         data.setViewFilter(data.zCol, null);
         
         OctaneDataFile odf = new OctaneDataFile(newData, data.getDataSource().headers);
-        String ext = asCSV ? ".octane":".csv";
+        String ext = asCSV ? ".csv":".octane";
         SaveDialog dlg = new SaveDialog("Save", imp.getTitle(), ext);
         if (dlg.getFileName() != null) {
             String outPath = dlg.getDirectory() + dlg.getFileName();
